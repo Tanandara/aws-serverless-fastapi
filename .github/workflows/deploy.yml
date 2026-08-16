@@ -1,0 +1,119 @@
+name: Test and deploy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Choose the manual action to run.
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
+      confirmation:
+        description: Required only for destroy. Type DESTROY to delete the application stack.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up dependencies
+        run: uv sync
+
+      - name: Run tests
+        run: uv run pytest
+
+  deploy:
+    name: Build and deploy
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build Lambda ZIP for Linux
+        shell: pwsh
+        run: ./scripts/package_lambda.ps1
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: github-actions-tasks-poc
+
+      - name: Upload Lambda artifact
+        run: |
+          aws s3 cp dist/lambda.zip \
+            "s3://${{ vars.AWS_ARTIFACT_BUCKET }}/tasks/${{ github.sha }}.zip"
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/cloudformation.yaml \
+            --stack-name "${{ vars.AWS_STACK_NAME }}" \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides \
+              ArtifactBucket="${{ vars.AWS_ARTIFACT_BUCKET }}" \
+              ArtifactKey="tasks/${{ github.sha }}.zip"
+
+      - name: Print API URL
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ vars.AWS_STACK_NAME }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text
+
+  destroy:
+    name: Destroy application stack
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'destroy' && inputs.confirmation == 'DESTROY'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: github-actions-tasks-poc-destroy
+
+      - name: Delete application stack
+        run: |
+          aws cloudformation delete-stack \
+            --stack-name "${{ vars.AWS_STACK_NAME }}"
+          aws cloudformation wait stack-delete-complete \
+            --stack-name "${{ vars.AWS_STACK_NAME }}"
