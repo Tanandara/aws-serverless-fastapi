@@ -38,6 +38,38 @@ Invoke-RestMethod "http://127.0.0.1:8000/tasks/$($task.id)/complete" -Method Pat
 uv run pytest
 ```
 
+### Optional: DynamoDB Local
+
+Unit tests do not require Docker or DynamoDB Local. Use this only when you want
+to exercise the DynamoDB repository locally without calling AWS.
+
+```powershell
+docker compose up -d dynamodb
+.\scripts\create_local_dynamodb_table.ps1
+```
+
+Set the local-only environment variables in the same PowerShell session, then
+run FastAPI as usual:
+
+```powershell
+$env:TASKS_TABLE_NAME = "tasks-local"
+$env:DYNAMODB_ENDPOINT_URL = "http://localhost:8001"
+$env:AWS_ACCESS_KEY_ID = "local"
+$env:AWS_SECRET_ACCESS_KEY = "local"
+$env:AWS_DEFAULT_REGION = "ap-southeast-1"
+
+uv run uvicorn app.main:app --app-dir src --reload
+```
+
+Open `http://127.0.0.1:8000/docs`. Stop the local database with:
+
+```powershell
+docker compose down
+```
+
+The database files are retained under `docker/dynamodb/`; they are ignored by
+Git. Remove that directory only when you want to reset local data.
+
 ### Deploy with CloudFormation
 
 Local development remains FastAPI + Uvicorn; use `/docs` for Swagger. In AWS,
@@ -87,6 +119,11 @@ ZIPs must first be placed in S3 because a standard `AWS::Lambda::Function`
 CloudFormation resource accepts its code from S3 (or ECR for container images),
 not from a local path. Pass `-ArtifactBucket YOUR_ARTIFACT_BUCKET` only if you
 want to use an existing bucket.
+
+When uploading a new ZIP over the same S3 object key, use the object's new
+**Version ID** as the `ArtifactVersion` CloudFormation parameter. This changes
+the Lambda `S3ObjectVersion` property and forces a code update while retaining
+the previous ZIP version in S3.
 
 For a named CLI profile:
 
@@ -154,9 +191,11 @@ non-secret values from the bootstrap stack output:
 | `AWS_ARTIFACT_BUCKET` | `your-globally-unique-artifact-bucket` |
 | `AWS_STACK_NAME` | `tasks-poc` |
 
-The bootstrap deploy role currently has `AdministratorAccess` purely to keep the
-POC setup short. Narrow it to the resources and actions your stack needs before
-using it in production.
+The bootstrap deploy role is limited to the CloudFormation, Lambda, DynamoDB,
+API Gateway, IAM, and S3 actions required by this POC. Its resource scope is
+still broad where CloudFormation-generated names make a stable ARN impractical;
+use a permissions boundary or a dedicated CloudFormation service role before a
+production deployment.
 
 #### Destroy the application stack
 

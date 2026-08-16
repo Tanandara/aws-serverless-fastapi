@@ -10,7 +10,26 @@ Parameters:
     Type: String
     Description: Object key of the Lambda deployment ZIP in ArtifactBucket.
 
+  ArtifactVersion:
+    Type: String
+    Default: ""
+    Description: Optional S3 object version ID. Set this when reusing an existing ArtifactKey.
+
+Conditions:
+  HasArtifactVersion: !Not [!Equals [!Ref ArtifactVersion, ""]]
+
 Resources:
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
   TasksFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -23,6 +42,17 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: TasksTableAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                Resource: !GetAtt TasksTable.Arn
 
   TasksFunction:
     Type: AWS::Lambda::Function
@@ -37,8 +67,12 @@ Resources:
       Code:
         S3Bucket: !Ref ArtifactBucket
         S3Key: !Ref ArtifactKey
+        S3ObjectVersion: !If [HasArtifactVersion, !Ref ArtifactVersion, !Ref "AWS::NoValue"]
       MemorySize: 256
       Timeout: 10
+      Environment:
+        Variables:
+          TASKS_TABLE_NAME: !Ref TasksTable
       TracingConfig:
         Mode: Active
 
@@ -83,6 +117,9 @@ Resources:
       ApiId: !Ref HttpApi
       StageName: "$default"
       AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
 
   AllowApiGatewayInvokeFunction:
     Type: AWS::Lambda::Permission
@@ -100,3 +137,7 @@ Outputs:
   FunctionName:
     Description: Lambda function name.
     Value: !Ref TasksFunction
+
+  TasksTableName:
+    Description: DynamoDB table used to persist tasks.
+    Value: !Ref TasksTable

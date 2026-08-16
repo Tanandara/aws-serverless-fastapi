@@ -11,3 +11,6 @@ wheels/
 
 # Local deployment artifacts
 .aws-sam/
+
+# DynamoDB Local data
+docker/dynamodb/
