@@ -15,6 +15,25 @@ Parameters:
     Default: ""
     Description: Optional S3 object version ID. Set this when reusing an existing ArtifactKey.
 
+  Environment:
+    Type: String
+    Default: poc
+    AllowedValues:
+      - poc
+      - dev
+      - test
+      - staging
+      - prod
+
+  ProjectName:
+    Type: String
+    Default: tasks
+
+  Owner:
+    Type: String
+    Default: tanandara
+    Description: Team or owner name. Do not enter personal email.
+
 Conditions:
   HasArtifactVersion: !Not [!Equals [!Ref ArtifactVersion, ""]]
 
@@ -22,6 +41,15 @@ Resources:
   TasksTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: cloudFormation
+        - Key: Owner
+          Value: !Ref Owner
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: id
@@ -33,6 +61,15 @@ Resources:
   TasksFunctionRole:
     Type: AWS::IAM::Role
     Properties:
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: cloudFormation
+        - Key: Owner
+          Value: !Ref Owner
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -56,7 +93,18 @@ Resources:
 
   TasksFunction:
     Type: AWS::Lambda::Function
+    DependsOn:
+      - TasksLogGroup
     Properties:
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: cloudFormation
+        - Key: Owner
+          Value: !Ref Owner
       FunctionName: !Sub "${AWS::StackName}-tasks"
       Description: FastAPI Tasks POC.
       Runtime: python3.14
@@ -76,9 +124,29 @@ Resources:
       TracingConfig:
         Mode: Active
 
+  TasksLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-tasks"
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: cloudFormation
+        - Key: Owner
+          Value: !Ref Owner
+
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
+      Tags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+        ManagedBy: cloudFormation
+        Owner: !Ref Owner
       Name: !Sub "${AWS::StackName}-http-api"
       ProtocolType: HTTP
 
